@@ -10,6 +10,67 @@ import chromadb
 from sentence_transformers import SentenceTransformer
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 import numpy as np 
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from typing import List
+import uvicorn
+from typing import Optional
+from fastapi import UploadFile, File
+import shutil
+
+
+upload_directory = "/Users/khang/Desktop/beach_test_files"
+
+class ModelResponse(BaseModel):
+        direct_answer: str = Field(description = "A clear synthesis of the answer.")
+        source: str = Field(description = "The content from the chunk of the best source along with its source_id") #consider making this a direct variable plug rather than an LLM thing
+        source_analysis: str = Field(description = "Detailed reasoning for the why this is the best source that answers the query.")
+        citation: str = Field(description="Exact citations using [Title | Path: source_path | id: id].")
+
+class Document(BaseModel):
+    id: Optional[str] = None
+    title: Optional[str] = None
+    content: Optional[str] = None
+    source_doc: Optional[str] = None
+
+class ChatRequest(BaseModel):
+    query: str
+
+
+app = FastAPI()
+
+#put future deployment endpoint here
+origins = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://0.0.0.0:5173",
+    "http://localhost:8000"
+]
+
+#use cors to block unauthorized api requests
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins = origins,
+    allow_credentials= True,
+    allow_headers = ["*"],
+    allow_methods = ["*"]
+)
+
+#take in document from user and add to database
+@app.post("/documents")
+async def add_document(file: UploadFile = File(...)):
+    file_path = os.path.join(upload_directory, file.filename)
+
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+    return {"filename": file.filename, "path": file_path}
+
+@app.post("/chat")
+async def chat_with_llm(request: ChatRequest):
+    documents = load_documents(upload_directory)
+    return(run_complete_rag_pipeline(documents, request.query))
+
+
 load_dotenv()
 
 def load_and_chunk_documents(documents):
@@ -136,11 +197,6 @@ def augment_prompt_with_context(query: str, search_results: List[Dict]) -> str:
 
 
 def generate_response(docs, query) -> str:
-    class ModelResponse(BaseModel):
-        direct_answer: str = Field(description = "A clear synthesis of the answer.")
-        source: str = Field(description = "The content from the chunk of the best source along with its source_id") #consider making this a direct variable plug rather than an LLM thing
-        source_analysis: str = Field(description = "Detailed reasoning for the why this is the best source that answers the query.")
-        citation: str = Field(description="Exact citations using [Title | Path: source_path | id: id].")
     parser = PydanticOutputParser(pydantic_object = ModelResponse)
 
     prompt_template= """
@@ -184,7 +240,7 @@ def generate_response(docs, query) -> str:
     return response
 
 
-def run_complete_rag_pipeline(documents):
+def run_complete_rag_pipeline(documents, query):
     """
     Pipeline:
     1) Load doc and chunk
@@ -194,7 +250,6 @@ def run_complete_rag_pipeline(documents):
     5) Return LLM with a prompt with appropriate context
     6) Generate a response
     """
-    query = input("What do you want to chat about: ")
 
     collection = setup_vector_database([], 0) #load nothing in. just set it up if you haven't already
     print("initialized database successfully")
@@ -227,7 +282,13 @@ def run_complete_rag_pipeline(documents):
     response = generate_response(search_results, query)
     print("Response generated successfully")
 
-
+    return {
+        "answer": response.direct_answer,
+        "source": response.source,
+        "analysis": response.source_analysis,
+        "citation": response.citation
+    }
+    '''
     print("-------------Direct Answer--------------")
     print(response.direct_answer)
     print("--------------Best Source----------")
@@ -236,7 +297,7 @@ def run_complete_rag_pipeline(documents):
     print(response.source_analysis)
     print("-------------Citation----------")
     print(response.citation)
-
+'''
 
 
 
@@ -245,7 +306,7 @@ def load_documents(folder_name):
     documents = []
     i = 0
     for e in os.scandir(path = folder_name):
-        if e.is_file():
+        if e.is_file() and not e.name.startswith('.') and e.name.endswith('.txt'):
             with open(e.path, "r") as f:
                 documents.append({
                     "id": f"{i}",
@@ -257,11 +318,11 @@ def load_documents(folder_name):
     return documents
 
 
-if __name__ == "__main__":
-    folder_name = r"/Users/khang/Desktop/test1"
-    documents = load_documents(folder_name)
-    #try:
-    run_complete_rag_pipeline(documents)
-    #except Exception as e: 
-    #    print("error in demo: {e}")
+if __name__ == "__main__": 
+    uvicorn.run(app, host= "0.0.0.0", port=8000)
+    #here would go any type of files/database
+
+    #documents = load_documents(upload_directory)
+    #run_complete_rag_pipeline(documents)
+
     
