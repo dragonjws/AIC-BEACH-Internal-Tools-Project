@@ -20,10 +20,21 @@ import shutil
 
 
 upload_directory = "/Users/khang/Desktop/beach_test_files"
+client = None
+collection = None
+model = SentenceTransformer('all-MiniLM-L6-v2')
+
+def initialize_db():
+    global client, collection
+    client = chromadb.PersistentClient(path="./my_local_db")
+    collection = client.get_or_create_collection(
+        name="test_docs",
+        metadata={"hnsw:space": "cosine"}
+    )
 
 class ModelResponse(BaseModel):
         direct_answer: str = Field(description = "A clear synthesis of the answer.")
-        source: str = Field(description = "The content from the chunk of the best source along with its source_id") #consider making this a direct variable plug rather than an LLM thing
+        source: List[str] = Field(description = "List of the content from the three chunks of the best sources along with their source_id") #consider making this a direct variable plug rather than an LLM thing
         source_analysis: str = Field(description = "Detailed reasoning for the why this is the best source that answers the query.")
         citation: str = Field(description="Exact citations using [Title | Path: source_path | id: id].")
 
@@ -63,12 +74,13 @@ async def add_document(file: UploadFile = File(...)):
 
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
+    documents = load_documents(upload_directory)
+    upload_and_process_docs(documents)
     return {"filename": file.filename, "path": file_path}
 
 @app.post("/chat")
 async def chat_with_llm(request: ChatRequest):
-    documents = load_documents(upload_directory)
-    return(run_complete_rag_pipeline(documents, request.query))
+    return(run_complete_rag_pipeline(request.query))
 
 
 load_dotenv()
@@ -78,10 +90,10 @@ def load_and_chunk_documents(documents):
     #load documents into policy_documents
 
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size = 200,
-        chunk_overlap=50, #give context
+        chunk_size = 1000,
+        chunk_overlap=200, #give context
         length_function = len,
-        separators = ["\\n", "\n", " ", ""], 
+        separators = ["\n\n", "\n", " ", ""], 
     )
 
     all_chunks = []
@@ -91,11 +103,15 @@ def load_and_chunk_documents(documents):
         #change "content" to whatever label we give it
         chunks = text_splitter.split_text(doc["content"]) 
         for i, chunk in enumerate(chunks):
+            #place the title of each doc at the top in order to give context to the llm later on
+            contextualized_content = f"Context: {doc["title"].replace(".txt","")} \nContent: {chunk}"
             all_chunks.append({
+            
+
                 #append dictionary values as appropriate
-                "id": f"{doc["title"]}_{i}", #use title_index here to create unique chunks
+                "id": f"{doc['title']}_{i}", #use title_index here to create unique chunks
                 "title": doc["title"],
-                "content": chunk,
+                "content": contextualized_content,
                 #"category": "some category",
                 "source_doc": doc["source_doc"],
             }) 
@@ -129,17 +145,16 @@ def setup_vector_database(chunks: List[Dict], num_new_files):
         )
     return collection
 
-def process_user_query(query:str):
-    model = SentenceTransformer('all-MiniLM-L6-v2')
+def process_user_query(query:str, model):
 
     cleaned_query = query.lower().strip()
     query_embedding = model.encode([cleaned_query])
 
-    return model, query_embedding[0]
+    return query_embedding[0]
 
-def search_vector_database(collection, query_embedding, top_k: int = 3):
+def search_vector_database(collection, query_embedding, top_k: int = 10):
     
-    #take your collectino of vectorized texts, and compare it to your query. Add the top 3 closest matches
+    #take your collectino of vectorized texts, and compare it to your query. Add the top 10 closest matches
     results = collection.query(
         query_embeddings = [query_embedding.tolist()],
         n_results= top_k #how many results we want to return
@@ -163,6 +178,11 @@ def search_vector_database(collection, query_embedding, top_k: int = 3):
             'metadata': metadata,
             'similarity': similarity
         })
+    
+    print(search_results[0]['content'])
+    print(search_results[1]['content'])
+    print(search_results[2]['content'])
+
 
     return search_results
 
@@ -201,20 +221,20 @@ def generate_response(docs, query) -> str:
 
     prompt_template= """
     ### ROLE
-    You are a professional AI Librarian. Your expertise is in analyzing research documents and identifying the most relevant information for a user's specific query. 
+    You are a professional AI Librarian.
 
     ### TASK
-    I will provide you with a USER QUESTION {query} and three context chunks {docs} retrieved from our internal database. Your goal is to:
-    1. ANSWER the question clearly and concisely.
-    2. RANK and IDENTIFY which of the three sources provided the most relevant information.
-    3. EXPLAIN WHY those specific chunks were chosen as the "best fit" for the research topic.
-    4. CITE the source for every claim made using the format: [Title | Path: source_path].
+    I will provide you with a USER QUESTION {query} and context chunks {docs}.
+    
+    1. ANSWER the question clearly.
+    2. You MUST provide exactly THREE (3) distinct sources in the 'source' list. 
+    3. If there are multiple chunks provided in the context, pick the 3 most relevant ones and place them in the list as separate strings.
+    4. Even if one source is very good, you MUST still provide two other supporting or contextual sources from the provided text to fill the 3 slots.
 
     ### CONSTRAINTS
-    - Use ONLY the provided context to answer. If the answer isn't there, say: "I am sorry, but the current library sources do not contain enough information to answer this."
-    - Do not use outside knowledge or "hallucinate" details.
-    - If sources contradict each other, highlight the discrepancy to the researcher.
-
+    - Do not combine sources. 
+    - Every entry in the 'source' list must be a raw string of text from the provided context.
+    
     {format_instructions}
     """
     llm = ChatOpenAI(model = "gpt-4o-mini", temperature = 0.0)
@@ -227,10 +247,14 @@ def generate_response(docs, query) -> str:
     )
     chain = prompt | llm | parser
     
+    #explicitly give "real_filename"
     sources = "\n\n".join([
-    f"SOURCE {i}:\nTitle: {res['metadata']['title']}\nPath: {res['metadata']['source_doc']}\nContent: {res['content']}"
-    for i, res in enumerate(docs, 1)
-    ])
+        f"SOURCE {i}:\n"
+        f"REAL_FILENAME: {res['metadata']['title']}\n" # Give it the actual metadata title
+        f"FILE_PATH: {res['metadata']['source_doc']}\n"
+        f"TEXT_CONTENT: {res['content']}"
+        for i, res in enumerate(docs, 1)
+])
 
     response = chain.invoke({
         "docs": sources,
@@ -239,8 +263,30 @@ def generate_response(docs, query) -> str:
     })
     return response
 
+def upload_and_process_docs(documents):
+    collection = setup_vector_database([], 0) #load nothing in. just set it up if you haven't already
+    print("initialized database successfully")
+    
+    #now we check which files have already been added as a chunk in the vector db 
+    #rework this checking system
+    
+    data = collection.get(include = ["metadatas"])
+    existing_metadatas = data.get("metadatas", [])
 
-def run_complete_rag_pipeline(documents, query):
+    already_processed_files = {m["title"] for m in existing_metadatas}
+    files_to_process = [d for d in documents if d['title'] not in already_processed_files]
+    num_new_files = len(files_to_process)
+    if files_to_process:
+        print("new files detected")
+        chunks = load_and_chunk_documents(files_to_process)
+        collection = setup_vector_database(chunks, len(chunks))
+        print("New vectors added successfully")
+
+    else:
+        print("no new files")
+
+
+def run_complete_rag_pipeline(query):
     """
     Pipeline:
     1) Load doc and chunk
@@ -251,26 +297,7 @@ def run_complete_rag_pipeline(documents, query):
     6) Generate a response
     """
 
-    collection = setup_vector_database([], 0) #load nothing in. just set it up if you haven't already
-    print("initialized database successfully")
-    
-    #now we check which files have already been added as a chunk in the vector db
-    existing_metadatas = collection.get(include = ["metadatas"])["metadatas"]
-    already_processed_files = {m["title"] for m in existing_metadatas}
-    files_to_process = [d for d in documents if d['title'] not in already_processed_files]
-    num_new_files = len(files_to_process)
-    if files_to_process:
-        print("new files detected")
-        chunks = load_and_chunk_documents(files_to_process)
-        collection = setup_vector_database(files_to_process, num_new_files)
-        print("New vectors added successfully")
-
-    else:
-        print("no new files")
-
-    #now we account for what's already stored in our database
-
-    model, query_embedding = process_user_query(query)
+    query_embedding = process_user_query(query, model)
     print("Processed query successfully")
 
     search_results = search_vector_database(collection, query_embedding)
@@ -282,13 +309,7 @@ def run_complete_rag_pipeline(documents, query):
     response = generate_response(search_results, query)
     print("Response generated successfully")
 
-    return {
-        "answer": response.direct_answer,
-        "source": response.source,
-        "analysis": response.source_analysis,
-        "citation": response.citation
-    }
-    '''
+    
     print("-------------Direct Answer--------------")
     print(response.direct_answer)
     print("--------------Best Source----------")
@@ -297,7 +318,17 @@ def run_complete_rag_pipeline(documents, query):
     print(response.source_analysis)
     print("-------------Citation----------")
     print(response.citation)
-'''
+    
+    return {
+        "answer": response.direct_answer,
+        "source_1": response.source[0],
+        "source_2": response.source[1] if len(response.source) > 1 else "",
+        "source_3": response.source[2] if len(response.source) > 2 else "",
+        "analysis": response.source_analysis,
+        "citation": response.citation
+    }
+    
+
 
 
 
@@ -319,6 +350,21 @@ def load_documents(folder_name):
 
 
 if __name__ == "__main__": 
+    db_path = "./my_local_db"
+    db_exists = os.path.exists(db_path) and len(os.listdir(db_path)) > 0
+
+    initialize_db()
+
+    if not db_exists:
+        print("No local database found. Initializing from folder...")
+        initial_docs = load_documents(upload_directory)
+        if initial_docs:
+            upload_and_process_docs(initial_docs)
+        else:
+            print("Warning: No .txt files found.")
+    else:
+        print("Local database instance found. Skipping initial load.")
+
     uvicorn.run(app, host= "0.0.0.0", port=8000)
     #here would go any type of files/database
 

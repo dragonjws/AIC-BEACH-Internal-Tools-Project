@@ -12,9 +12,11 @@
   --message-color-user: #417d3b
 }
 .message.ai {
+  margin-top: 15px;
   background-color: var(--message-color-ai);
   color: black;
   margin-right: 4em;
+  margin-bottom: 15px;
 }
 .message.user{
   background-color:var(--message-color-user);
@@ -33,6 +35,18 @@
   flex-grow: 1;
   line-height: 2;
 }
+
+.input-form textarea{
+  field-sizing: content;
+  min-height:40px;
+  max-height: 200px; /*stop expanding here then scroll instead*/
+  
+  width: 100%;
+  resize: none;           
+  padding: 10px;
+  font-family: inherit;
+  
+}
 .heading {
   margin-top: 5em;
 }
@@ -43,6 +57,16 @@
   padding: 1.5em;
   will-change: filter;
   transition: filter 300ms;
+}
+
+.message {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: auto;
+  text-align: left; /* OVERRIDE the root center alignment */
+  word-wrap: break-word;
+  overflow-wrap: break-word;
 }
 .logo:hover {
   filter: drop-shadow(0 0 2em #646cffaa);
