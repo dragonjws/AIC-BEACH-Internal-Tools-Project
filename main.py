@@ -9,7 +9,9 @@ from typing import List, Dict, Any
 import chromadb
 from sentence_transformers import SentenceTransformer
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-import numpy as np 
+import numpy as np
+import boto3
+import json
 load_dotenv()
 
 def load_and_chunk_documents(documents):
@@ -198,6 +200,10 @@ def run_complete_rag_pipeline(documents):
 
     collection = setup_vector_database([], 0) #load nothing in. just set it up if you haven't already
     print("initialized database successfully")
+    print(f"Loaded {len(documents)} document(s) into the RAG pipeline.")
+    if not documents:
+        print("No documents loaded from S3. Please verify bucket contents and AWS credentials.")
+        return
     
     #now we check which files have already been added as a chunk in the vector db
     existing_metadatas = collection.get(include = ["metadatas"])["metadatas"]
@@ -207,7 +213,7 @@ def run_complete_rag_pipeline(documents):
     if files_to_process:
         print("new files detected")
         chunks = load_and_chunk_documents(files_to_process)
-        collection = setup_vector_database(files_to_process, num_new_files)
+        collection = setup_vector_database(chunks, num_new_files)
         print("New vectors added successfully")
 
     else:
@@ -256,10 +262,63 @@ def load_documents(folder_name):
                 i += 1
     return documents
 
+def load_documents_from_s3(bucket_name):
+    """
+    Load text files from an S3 bucket and return them as documents.
+    Saves the documents to a JSON file for future use.
+    """
+    json_filename = f"{bucket_name}_documents.json"
+    
+    # Check if JSON file already exists
+    if os.path.exists(json_filename):
+        print(f"Loading documents from existing JSON file: {json_filename}")
+        with open(json_filename, 'r', encoding='utf-8') as f:
+            documents = json.load(f)
+        return documents
+    
+    s3_client = boto3.client('s3')
+    documents = []
+    i = 0
+    
+    try:
+        # List all objects in the bucket
+        response = s3_client.list_objects_v2(Bucket=bucket_name)
+        
+        if 'Contents' in response:
+            for obj in response['Contents']:
+                key = obj['Key']
+                # Only process text files (you can modify this filter as needed)
+                if key.endswith(('.txt', '.md', '.json')):
+                    try:
+                        # Get the object from S3
+                        s3_response = s3_client.get_object(Bucket=bucket_name, Key=key)
+                        content = s3_response['Body'].read().decode('utf-8')
+                        
+                        documents.append({
+                            "id": f"{i}",
+                            "title": key.split('/')[-1],  # Use filename as title
+                            "content": content,
+                            "source_doc": f"s3://{bucket_name}/{key}",
+                        })
+                        i += 1
+                        print(f"Loaded document: {key}")
+                    except Exception as e:
+                        print(f"Error loading {key}: {e}")
+        
+        # Save documents to JSON file
+        with open(json_filename, 'w', encoding='utf-8') as f:
+            json.dump(documents, f, indent=2, ensure_ascii=False)
+        print(f"Saved {len(documents)} documents to {json_filename}")
+        
+    except Exception as e:
+        print(f"Error accessing S3 bucket {bucket_name}: {e}")
+    
+    return documents
+
 
 if __name__ == "__main__":
-    folder_name = r"/Users/khang/Desktop/test1"
-    documents = load_documents(folder_name)
+    bucket_name = "updatedbucketssss"
+    documents = load_documents_from_s3(bucket_name)
     #try:
     run_complete_rag_pipeline(documents)
     #except Exception as e: 
