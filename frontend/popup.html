@@ -1,0 +1,52 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AIC Chatbot</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+
+  <body>
+    <div class="app">
+      <header class="header">
+        <div class="brand">
+          <div class="logo"></div>
+          <div>
+            <div class="title">AIC Chatbot</div>
+            <div class="subtitle">Fast • Clean • Local</div>
+          </div>
+        </div>
+
+        <button id="clearBtn" class="iconBtn" title="Clear chat" aria-label="Clear chat">
+          ×
+        </button>
+      </header>
+
+      <main id="messages" class="messages" aria-live="polite"></main>
+
+      <div id="typing" class="typing hidden">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+      </div>
+
+      <form id="chatForm" class="composer">
+        <input
+          id="text"
+          class="input"
+          placeholder="Message…"
+          autocomplete="off"
+        />
+        <button id="sendBtn" class="send" type="submit" aria-label="Send">
+          ➤
+        </button>
+      </form>
+
+      <div class="footer">
+        <span class="pill">⌘ Enter to send</span>
+        <span class="pill">Esc to clear</span>
+      </div>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
