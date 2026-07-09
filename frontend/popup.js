@@ -7,6 +7,15 @@ const clearBtn = document.getElementById("clearBtn");
 
 const BACKEND_URL = "http://localhost:8000/chat";
 
+const MAX_INPUT_HEIGHT = 120; // px, matches the CSS max-height on .input
+
+function autoGrowInput() {
+  input.style.height = "auto";
+  input.style.height = Math.min(input.scrollHeight, MAX_INPUT_HEIGHT) + "px";
+}
+
+input.addEventListener("input", autoGrowInput);
+
 function nowTime() {
   const d = new Date();
   return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -18,7 +27,8 @@ function addMessage(role, text, extras) {
 
   const bubble = document.createElement("div");
   bubble.className = "bubble";
-  bubble.textContent = text;
+  //bubble.textContent = text;
+  bubble.innerHTML = text;
 
   if (extras) {
     if (extras.source_1) {
@@ -26,7 +36,8 @@ function addMessage(role, text, extras) {
       s.style.marginTop = "6px";
       s.style.fontSize = "11px";
       s.style.color = "rgba(255,255,255,0.7)";
-      s.textContent = `Source: ${extras.source_1}`;
+      // Note: You might also want to use .innerHTML here if source_1 contains links
+      s.innerHTML = `Source: ${extras.source_1}`; 
       bubble.appendChild(s);
     }
     if (extras.analysis) {
@@ -107,6 +118,13 @@ function clearChat() {
   input.focus();
 }
 
+input.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    form.requestSubmit();
+  }
+});
+
 form.addEventListener("submit", (e) => {
   e.preventDefault();
   const text = input.value.trim();
@@ -114,6 +132,7 @@ form.addEventListener("submit", (e) => {
 
   addMessage("user", text);
   input.value = "";
+  autoGrowInput(); // shrink back down to a single line after sending
   botReply(text);
 });
 
@@ -121,10 +140,6 @@ clearBtn.addEventListener("click", clearChat);
 
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") clearChat();
-  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-    e.preventDefault();
-    form.requestSubmit();
-  }
 });
 
 addMessage("assistant", "Hey — I'm ready. Ask me anything.");

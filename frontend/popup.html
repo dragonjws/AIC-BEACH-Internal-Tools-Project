@@ -34,19 +34,20 @@
       </div>
 
       <form id="chatForm" class="composer">
-        <input
+        <textarea
           id="text"
           class="input"
           placeholder="Message…"
-          autocomplete="off"
-        />
+          rows="1"
+        ></textarea>
         <button id="sendBtn" class="send" type="submit" aria-label="Send">
           ➤
         </button>
       </form>
 
       <div class="footer">
-        <span class="pill">⌘ Enter to send</span>
+        <span class="pill">Enter to send</span>
+        <span class="pill">Shift + Enter for new line</span>
         <span class="pill">Esc to clear</span>
       </div>
     </div>
